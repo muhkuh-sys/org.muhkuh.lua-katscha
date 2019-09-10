@@ -2,6 +2,9 @@
 /build/
 /targets/
 
+# Ignore the build properties for the netX software.
+/build.properties
+
 # Ignore all compiled python modules.
 *.pyc
 
