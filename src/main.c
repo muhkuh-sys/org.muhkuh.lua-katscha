@@ -233,16 +233,72 @@ static void usb_init(void)
 	ulValue |= USB_FIFO_MODE_Packet      << HOSTSRT(usb_dev_fifo_ctrl_conf_mode_jtag_tx);
 	ptUsbDevFifoCtrlArea->ulUsb_dev_fifo_ctrl_conf = ulValue;
 
-	/* enable core */
+	/* Enable the core. */
 	ulValue  = HOSTMSK(usb_dev_cfg_usb_core_enable);
-	/* Set disconnect timeout to max. */
+	/* Set disconnect timeout to the maximum. */
 	ulValue |= 3 << HOSTSRT(usb_dev_cfg_disconn_timeout);
 	ptUsbDevCtrlArea->ulUsb_dev_cfg = ulValue;
 
-	/* disable all irqs */
+	/* Disable all IRQs. */
 	ptUsbDevCtrlArea->ulUsb_dev_irq_mask = 0;
         /* Acknowledge any pending IRQs. */
         ptUsbDevCtrlArea->ulUsb_dev_irq_raw = 0xffffffffU;
+}
+
+
+
+void process_packet(void)
+{
+	HOSTDEF(ptUsbDevCtrlArea)
+	HOSTDEF(ptUsbDevFifoArea)
+	HOSTDEF(ptUsbDevFifoCtrlArea)
+	unsigned long ulValue;
+	unsigned long ulFillLevel;
+	unsigned char *pucCnt;
+	unsigned char *pucEnd;
+	unsigned char aucPacketRx[64];
+
+
+	/* Wait for a new packet. */
+	ulValue  = ptUsbDevCtrlArea->ulUsb_dev_irq_raw;
+	ulValue &= HOSTMSK(usb_dev_irq_raw_jtag_rx_packet_received);
+	if( ulValue!=0 )
+	{
+		/* Acknowledge the IRQ. */
+		ptUsbDevCtrlArea->ulUsb_dev_irq_raw = HOSTMSK(usb_dev_irq_raw_jtag_rx_packet_received);
+
+		/* Get the size of the received packet. */
+		ulFillLevel   = ptUsbDevFifoCtrlArea->ulUsb_dev_fifo_ctrl_jtag_ep_rx_len;
+		ulFillLevel  &= HOSTMSK(usb_dev_fifo_ctrl_jtag_ep_rx_len_packet_len);
+		ulFillLevel >>= HOSTSRT(usb_dev_fifo_ctrl_jtag_ep_rx_len_packet_len);
+
+		/* Ignore ZLPs. */
+		if( ulFillLevel>0 )
+		{
+			if( ulFillLevel>64 )
+			{
+				/* Reset the FIFO. */
+				ulValue  = ptUsbDevFifoCtrlArea->ulUsb_dev_fifo_ctrl_conf;
+				ulValue |= (1U << 5U) << HOSTSRT(usb_dev_fifo_ctrl_conf_reset);
+				ptUsbDevFifoCtrlArea->ulUsb_dev_fifo_ctrl_conf = ulValue;
+
+				/* Clear the reset. */
+				ulValue &= ~(HOSTMSK(usb_dev_fifo_ctrl_conf_reset));
+				ptUsbDevFifoCtrlArea->ulUsb_dev_fifo_ctrl_conf = ulValue;
+			}
+			else
+			{
+				/* Copy the complete packet to the buffer. */
+				pucCnt = aucPacketRx;
+				pucEnd = aucPacketRx + ulFillLevel;
+				do
+				{
+					*(pucCnt++) = (unsigned char)(ptUsbDevFifoArea->ulUsb_dev_jtag_rx_data);
+				} while( pucCnt<pucEnd );
+
+			}
+		}
+	}
 }
 
 
@@ -259,6 +315,7 @@ void katscha_main(void)
 	rdy_run_blinki_init(&tBlinkiHandle, 0x00000055, 0x00000150);
 	while(1)
 	{
+		process_packet();
 		rdy_run_blinki(&tBlinkiHandle);
 	};
 }

@@ -45,6 +45,7 @@ katscha::katscha(void)
  : m_tCallbackLuaFn({0, 0})
  , m_lCallbackUserData(0)
  , m_ptLibUsbContext(NULL)
+ , m_ptDeviceHandle(NULL)
 {
 	libusb_init(&m_ptLibUsbContext);
 	libusb_set_option(m_ptLibUsbContext, LIBUSB_OPTION_LOG_LEVEL, LIBUSB_LOG_LEVEL_INFO);
@@ -54,6 +55,11 @@ katscha::katscha(void)
 
 katscha::~katscha(void)
 {
+	if( m_ptDeviceHandle!=NULL )
+	{
+		close();
+	}
+
 	if( m_ptLibUsbContext!=NULL )
 	{
 		libusb_exit(m_ptLibUsbContext);
@@ -169,6 +175,8 @@ unsigned int katscha::scan(lua_State *ptLuaStateForTableAccess)
 				else
 				{
 					/* Build the path string. */
+					uiBusNr = libusb_get_bus_number(ptDev);
+					uiDevAdr = libusb_get_device_address(ptDev);
 					sprintf(acPathString, "%02x", uiBusNr);
 					iPathStringPos = 2;
 					for(iCnt=0; iCnt<iResult; ++iCnt)
@@ -179,8 +187,6 @@ unsigned int katscha::scan(lua_State *ptLuaStateForTableAccess)
 					acPathString[iPathStringPos] = 0;
 
 					/* construct the name */
-					uiBusNr = libusb_get_bus_number(ptDev);
-					uiDevAdr = libusb_get_device_address(ptDev);
 					snprintf(acName, sizMaxName-1, m_pcPluginNamePattern, uiBusNr, uiDevAdr, acPathString);
 
 				        /* Get the size of the table. */
@@ -190,7 +196,7 @@ unsigned int katscha::scan(lua_State *ptLuaStateForTableAccess)
 				        /* add the pointer object to the table */
 				        lua_rawseti(ptLuaStateForTableAccess, 2, sizTable+1);
 
-					log("Found Katscha at %s %s", acName);
+					log("Found Katscha at %s", acName);
 
 					++uiDetectedDevices;
 				}
@@ -198,10 +204,171 @@ unsigned int katscha::scan(lua_State *ptLuaStateForTableAccess)
 
 			++ptDevCnt;
 		}
+
+		/* free the device list */
+		libusb_free_device_list(ptDeviceList, 1);
 	}
 
 	log("Finished scan. Found %d devices.", uiDetectedDevices);
 	return uiDetectedDevices;
+}
+
+
+
+void katscha::open(const char *pcDevice)
+{
+	ssize_t ssizDevList;
+	libusb_device **ptDeviceList;
+	libusb_device **ptDevCnt, **ptDevEnd;
+	libusb_device *ptDev;
+	libusb_error tError;
+	int iDeviceIsKatscha;
+	int iResult;
+	const size_t sizMaxName = 32;
+	char acName[sizMaxName];
+	unsigned int uiBusNr;
+	unsigned int uiDevAdr;
+	const int iPathMax = 32;
+	unsigned char aucPath[iPathMax];
+	/* bus number as a digit plus path elements as single digits */
+	/* This is the Location ID format used by USBView, but is this sufficient? */
+	char acPathString[iPathMax * 2 + 2] = {0};
+	int iPathStringPos;
+	int iCnt;
+	libusb_device_handle *ptDevHandle;
+
+
+	log("Open device '%s'.", pcDevice);
+	if( strlen(pcDevice)>sizMaxName )
+	{
+		log("The device name is too long.");
+	}
+	else
+	{
+		ptDeviceList = NULL;
+		ssizDevList = libusb_get_device_list(m_ptLibUsbContext, &ptDeviceList);
+		if( ssizDevList<0 )
+		{
+			/* failed to detect devices */
+			tError = (libusb_error)ssizDevList;
+			log("failed to detect usb devices: %d:%s", tError, libusb_strerror(tError));
+		}
+		else
+		{
+			/* Loop over all devices. */
+			ptDevCnt = ptDeviceList;
+			ptDevEnd = ptDevCnt + ssizDevList;
+			while( ptDevCnt<ptDevEnd )
+			{
+				ptDev = *ptDevCnt;
+				iDeviceIsKatscha = identifyDevice(ptDev);
+				if( iDeviceIsKatscha!=0 )
+				{
+					/* Get the location. */
+					iResult = libusb_get_port_numbers(ptDev, aucPath, iPathMax);
+					if( iResult<=0 )
+					{
+						log("Failed to get the port numbers: %d\n", iResult);
+					}
+					else
+					{
+						/* Build the path string. */
+						uiBusNr = libusb_get_bus_number(ptDev);
+						uiDevAdr = libusb_get_device_address(ptDev);
+						sprintf(acPathString, "%02x", uiBusNr);
+						iPathStringPos = 2;
+						for(iCnt=0; iCnt<iResult; ++iCnt)
+						{
+							sprintf(acPathString+iPathStringPos, "%02x", aucPath[iCnt]);
+							iPathStringPos += 2;
+						}
+						acPathString[iPathStringPos] = 0;
+
+						/* construct the name */
+						snprintf(acName, sizMaxName-1, m_pcPluginNamePattern, uiBusNr, uiDevAdr, acPathString);
+
+						if( strcmp(acName, pcDevice)==0 )
+						{
+							log("Open Katscha at bus %d, device address %d, USB location '%s'.", uiBusNr, uiDevAdr, acPathString);
+
+							iResult = libusb_open(ptDev, &ptDevHandle);
+							if( iResult==LIBUSB_SUCCESS )
+							{
+								/* Claim interface 1. */
+								iResult = libusb_claim_interface(ptDevHandle, 1);
+								if( iResult!=LIBUSB_SUCCESS )
+								{
+									/* Failed to claim the interface. */
+									tError = (libusb_error)iResult;
+									log("failed to claim interface 1: %d:%s\n", iResult, libusb_strerror(tError));
+									libusb_close(ptDevHandle);
+								}
+								else
+								{
+									m_ptDeviceHandle = ptDevHandle;
+								}
+							}
+
+							break;
+						}
+					}
+				}
+
+				++ptDevCnt;
+			}
+
+			/* free the device list */
+			libusb_free_device_list(ptDeviceList, 1);
+		}
+	}
+}
+
+
+
+void katscha::close(void)
+{
+	if( m_ptDeviceHandle!=NULL )
+	{
+		libusb_close(m_ptDeviceHandle);
+		m_ptDeviceHandle = NULL;
+	}
+}
+
+
+
+void katscha::test(void)
+{
+	unsigned int uiCnt;
+	int iResult;
+	unsigned char aucData[64];
+	int iProcessed;
+	libusb_error tError;
+	unsigned int uiTimeoutMs = 1000U;
+
+
+	if( m_ptDeviceHandle==NULL )
+	{
+		log("Not open.");
+	}
+	else
+	{
+		/* Send a test packet. */
+		for(uiCnt=0; uiCnt<64; ++uiCnt)
+		{
+			aucData[uiCnt] = (unsigned char)uiCnt;
+		}
+
+		iResult = libusb_bulk_transfer(m_ptDeviceHandle, m_ucEndpointOut, aucData, 64, &iProcessed, uiTimeoutMs);
+		if( iResult!=LIBUSB_SUCCESS )
+		{
+			tError = (libusb_error)iResult;
+			log("failed to claim interface 1: %d:%s\n", iResult, libusb_strerror(tError));
+		}
+		else
+		{
+			log("Sent test packet.");
+		}
+	}
 }
 
 

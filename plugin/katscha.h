@@ -274,6 +274,11 @@ public:
 	void set_callback(SWIGLUA_REF tLuaFn, long lCallbackUserData);
 
 	unsigned int scan(lua_State *ptLuaStateForTableAccess);
+
+	void open(const char *pcDevice);
+	void close(void);
+
+	void test(void);
 /* *** LUA interface end *** */
 
 #if !defined(SWIG)
@@ -291,10 +296,13 @@ private:
 	long m_lCallbackUserData;
 
 	libusb_context *m_ptLibUsbContext;
+	libusb_device_handle *m_ptDeviceHandle;
 
 	static const char *m_pcPluginNamePattern;
 	const unsigned short m_usKatschaVendor = 0x1939U;
 	const unsigned short m_usKatschaProduct = 0x002fU;
+	const unsigned char m_ucEndpointIn = 0x85U;
+	const unsigned char m_ucEndpointOut = 0x04U;
 
 #endif  /* !defined(SWIG) */
 };
