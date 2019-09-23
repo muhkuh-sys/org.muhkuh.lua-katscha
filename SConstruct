@@ -20,6 +20,9 @@
 #-------------------------------------------------------------------------#
 
 
+import os
+
+
 #----------------------------------------------------------------------------
 #
 # Set up the Muhkuh Build System.
@@ -68,3 +71,26 @@ env_netx56_intram.Replace(LDFILE = 'src/netx56/netx56_intram.ld')
 src_netx56_intram = env_netx56_intram.SetBuildPath('targets/netx56', 'src', sources)
 elf_netx56_intram = env_netx56_intram.Elf('targets/netx56/netx56_intram.elf', src_netx56_intram + env_netx56_intram['PLATFORM_LIBRARY'])
 bb1_netx56_intram = env_netx56_intram.BootBlock('targets/katscha_netx56_spi_intram.bin', elf_netx56_intram, BOOTBLOCK_SRC='SPI_GEN_10', BOOTBLOCK_DST='INTRAM')
+
+
+#----------------------------------------------------------------------------
+#   
+# Build the artifacts.
+#
+strGroup = 'org.muhkuh.lua'
+strModule = 'katscha'
+
+# Split the group by dots.
+aGroup = strGroup.split('.')
+# Build the path for all artifacts.
+strModulePath = 'targets/jonchki/repository/%s/%s/%s' % ('/'.join(aGroup), strModule, PROJECT_VERSION)
+
+# Set the name of the artifact.
+strArtifact0 = 'katscha-firmware'
+
+tArcList0 = atEnv.DEFAULT.ArchiveList('zip')
+tArcList0.AddFiles('',
+    bb1_netx56_intram)
+
+tArtifact0 = atEnv.DEFAULT.Archive(os.path.join(strModulePath, '%s-%s.zip' % (strArtifact0, PROJECT_VERSION)), None, ARCHIVE_CONTENTS = tArcList0)
+tArtifact0Pom = atEnv.DEFAULT.ArtifactVersion(os.path.join(strModulePath, '%s-%s.pom' % (strArtifact0, PROJECT_VERSION)), 'src/installer/pom.xml')

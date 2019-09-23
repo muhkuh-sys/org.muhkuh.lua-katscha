@@ -19,20 +19,6 @@ INCLUDE(${CMAKE_HOME_DIRECTORY}/cmake/muhkuh_swig_lua_runtime.cmake)
 FIND_PACKAGE(libusb REQUIRED)
 
 
-##----------------------------------------------------------------------------
-##
-## Get the netX USB firmware binaries (in form of C data arrays) and headers.
-##
-#
-#SET(NETX_USB_FIRMWARE_SOURCES ${CMAKE_HOME_DIRECTORY}/targets/plugins/romloader/usb/netx/usbmon_netx10.c
-#                              ${CMAKE_HOME_DIRECTORY}/targets/plugins/romloader/usb/netx/usbmon_netx56.c
-#                              ${CMAKE_HOME_DIRECTORY}/targets/plugins/romloader/usb/netx/usbmon_netx500.c)
-#
-#SET(NETX_USB_FIRMWARE_HEADERS ${CMAKE_HOME_DIRECTORY}/targets/plugins/romloader/usb/netx/usbmon_netx10.h
-#                              ${CMAKE_HOME_DIRECTORY}/targets/plugins/romloader/usb/netx/usbmon_netx56.h
-#                              ${CMAKE_HOME_DIRECTORY}/targets/plugins/romloader/usb/netx/usbmon_netx500.h)
-
-
 #----------------------------------------------------------------------------
 #
 # Set the platform specific parts.
@@ -95,3 +81,65 @@ IF((CMAKE_SYSTEM_NAME STREQUAL "Windows") AND (${CMAKE_COMPILER_IS_GNUCC}))
 	ADD_TEST(NAME romloader_usb_MinGW_DLL_dependencies
 	         COMMAND "${PYTHON_EXECUTABLE}" ${TEST_SCRIPT_DIR}/mingw_dll_dependencies.py -u lua5.1 -u lua5.2 -u lua5.3 -u lua5.4 $<TARGET_FILE:TARGET_plugins_katscha_LUA>)
 ENDIF((CMAKE_SYSTEM_NAME STREQUAL "Windows") AND (${CMAKE_COMPILER_IS_GNUCC}))
+
+
+#----------------------------------------------------------------------------
+#
+# Build a package for the selected platform.
+#
+SET(CPACK_OUTPUT_FILE_PREFIX ${CMAKE_BINARY_DIR}/../../repository/org/muhkuh/lua/katscha/${PROJECT_VERSION})
+SET(CPACK_INCLUDE_TOPLEVEL_DIRECTORY FALSE)
+SET(CPACK_PACKAGE_FILE_NAME "lua${BUILDCFG_LUA_VERSION}-katscha-${PROJECT_VERSION}-${JONCHKI_PLATFORM}")
+
+SET(CPACK_GENERATOR "TXZ")
+INCLUDE(CPack)
+
+IF(JONCHKI_PLATFORM_DIST_ID STREQUAL "windows")
+	# Package a windows build.
+
+	CONFIGURE_FILE(installer/lua${BUILDCFG_LUA_VERSION}/install_windows.lua
+	               ${CMAKE_CURRENT_BINARY_DIR}/package/install.lua
+	               @ONLY)
+
+	INSTALL(FILES ${CMAKE_CURRENT_BINARY_DIR}/package/install.lua
+	        DESTINATION .)
+ELSE(JONCHKI_PLATFORM_DIST_ID STREQUAL "windows")
+	# Package a linux build.
+
+	CONFIGURE_FILE(installer/lua${BUILDCFG_LUA_VERSION}/install_linux.lua
+	               ${CMAKE_CURRENT_BINARY_DIR}/package/install.lua
+	               @ONLY)
+
+	INSTALL(FILES ${CMAKE_CURRENT_BINARY_DIR}/package/install.lua
+	        DESTINATION .)
+ENDIF(JONCHKI_PLATFORM_DIST_ID STREQUAL "windows")
+
+CONFIGURE_FILE(installer/lua${BUILDCFG_LUA_VERSION}/katscha.xml
+               ${CPACK_OUTPUT_FILE_PREFIX}/lua${BUILDCFG_LUA_VERSION}-katscha-${PROJECT_VERSION}-${JONCHKI_PLATFORM}.xml
+               @ONLY)
+
+
+#-----------------------------------------------------------------------------
+#
+# Create a custom target named "pack".
+# It builds the package and creates the hashes.
+#
+ADD_CUSTOM_TARGET(pack
+                  COMMAND ${CMAKE_MAKE_PROGRAM}
+                  COMMAND ${CMAKE_MAKE_PROGRAM} package
+                  COMMAND "${PYTHON_EXECUTABLE}" ${CMAKE_HOME_DIRECTORY}/cmake/tools/generate_hash.py ${CPACK_OUTPUT_FILE_PREFIX}/lua${BUILDCFG_LUA_VERSION}-katscha-${PROJECT_VERSION}-${JONCHKI_PLATFORM}.xml
+                  COMMAND "${PYTHON_EXECUTABLE}" ${CMAKE_HOME_DIRECTORY}/cmake/tools/generate_hash.py ${CPACK_OUTPUT_FILE_PREFIX}/lua${BUILDCFG_LUA_VERSION}-katscha-${PROJECT_VERSION}-${JONCHKI_PLATFORM}.tar.xz
+                  COMMENT "Pack the artifact and generate the hashes...")
+
+
+#-----------------------------------------------------------------------------
+#
+# Filter the pom.xml file.
+#
+SET(POM_ARTIFACT_ID  "lua${BUILDCFG_LUA_VERSION}-romloader")
+SET(POM_GROUP_ID     "org.muhkuh.lua")
+SET(POM_VERSION      "${PROJECT_VERSION}")
+SET(POM_PACKAGING    "tar.xz")
+CONFIGURE_FILE(installer/lua${BUILDCFG_LUA_VERSION}/pom.xml
+               ${CPACK_OUTPUT_FILE_PREFIX}/lua${BUILDCFG_LUA_VERSION}-katscha-${PROJECT_VERSION}.pom
+               @ONLY)
