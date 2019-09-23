@@ -95,173 +95,15 @@ typedef struct
 #       error "Unknown system. Add a way to detect the endianness here or use CMake."
 #endif
 
-
-/* NOTE: Use "pragma pack" instead of "attribute packed" as the latter does not work on MinGW.
- *       See here for details: https://sourceforge.net/p/mingw-w64/bugs/588/
- */
-#pragma pack(push, 1)
-
-/* This is a packet header up to the packet type. */
-struct MIV3_PACKET_HEADER_STRUCT
-{
-	uint8_t  ucStreamStart;
-	uint16_t usDataSize;
-	uint8_t  ucSequenceNumber;
-	uint8_t  ucPacketType;
-};
-MUHKUH_STATIC_ASSERT( sizeof(struct MIV3_PACKET_HEADER_STRUCT)==5, "Packing of MIV3_PACKET_HEADER_STRUCT does not work.");
-
-typedef union MIV3_PACKET_HEADER_UNION
-{
-	struct MIV3_PACKET_HEADER_STRUCT s;
-	uint8_t auc[5];
-} MIV3_PACKET_HEADER_T;
-MUHKUH_STATIC_ASSERT( sizeof(MIV3_PACKET_HEADER_T)==5, "Packing of MIV3_PACKET_HEADER_T does not work.");
-
-
-
-/* This is a complete sync packet. */
-struct MIV3_PACKET_SYNC_STRUCT
-{
-	MIV3_PACKET_HEADER_T tHeader;
-	uint8_t  aucMagic[4];
-	uint16_t  usVersionMinor;
-	uint16_t  usVersionMajor;
-	uint8_t   ucChipType;
-	uint16_t  usMaximumPacketSize;
-	uint8_t   ucCrcHi;
-	uint8_t   ucCrcLo;
-};
-MUHKUH_STATIC_ASSERT( sizeof(struct MIV3_PACKET_SYNC_STRUCT)==18, "Packing of MIV3_PACKET_SYNC_STRUCT does not work.");
-
-typedef union MIV3_PACKET_SYNC_UNION
-{
-	struct MIV3_PACKET_SYNC_STRUCT s;
-	uint8_t auc[18];
-} MIV3_PACKET_SYNC_T;
-MUHKUH_STATIC_ASSERT( sizeof(MIV3_PACKET_SYNC_T)==18, "Packing of MIV3_PACKET_SYNC_T does not work.");
-
-
-
-/* This is a complete acknowledge packet. */
-struct MIV3_PACKET_ACK_STRUCT
-{
-	MIV3_PACKET_HEADER_T tHeader;
-	uint8_t  ucCrcHi;
-	uint8_t  ucCrcLo;
-};
-MUHKUH_STATIC_ASSERT( sizeof(struct MIV3_PACKET_ACK_STRUCT)==7, "Packing of MIV3_PACKET_ACK_STRUCT does not work.");
-
-typedef union MIV3_PACKET_ACK_UNION
-{
-	struct MIV3_PACKET_ACK_STRUCT s;
-	uint8_t auc[7];
-} MIV3_PACKET_ACK_T;
-MUHKUH_STATIC_ASSERT( sizeof(MIV3_PACKET_ACK_T)==7, "Packing of MIV3_PACKET_ACK_T does not work.");
-
-
-
-/* This is a complete status packet. */
-struct MIV3_PACKET_STATUS_STRUCT
-{
-	MIV3_PACKET_HEADER_T tHeader;
-	uint8_t  ucStatus;
-	uint8_t  ucCrcHi;
-	uint8_t  ucCrcLo;
-};
-MUHKUH_STATIC_ASSERT( sizeof(struct MIV3_PACKET_STATUS_STRUCT)==8, "Packing of MIV3_PACKET_STATUS_STRUCT does not work.");
-
-typedef union MIV3_PACKET_STATUS_UNION
-{
-	struct MIV3_PACKET_STATUS_STRUCT s;
-	uint8_t auc[8];
-} MIV3_PACKET_STATUS_T;
-MUHKUH_STATIC_ASSERT( sizeof(MIV3_PACKET_STATUS_T)==8, "Packing of MIV3_PACKET_STATUS_T does not work.");
-
-
-
-/* This is a complete status packet. */
-struct MIV3_PACKET_CANCEL_CALL_STRUCT
-{
-	MIV3_PACKET_HEADER_T tHeader;
-	uint8_t  ucData;
-	uint8_t  ucCrcHi;
-	uint8_t  ucCrcLo;
-};
-MUHKUH_STATIC_ASSERT( sizeof(struct MIV3_PACKET_CANCEL_CALL_STRUCT)==8, "Packing of MIV3_PACKET_CANCEL_CALL_STRUCT does not work.");
-
-typedef union MIV3_PACKET_CANCEL_CALL_UNION
-{
-	struct MIV3_PACKET_CANCEL_CALL_STRUCT s;
-	uint8_t auc[8];
-} MIV3_PACKET_CANCEL_CALL_T;
-MUHKUH_STATIC_ASSERT( sizeof(MIV3_PACKET_CANCEL_CALL_T)==8, "Packing of MIV3_PACKET_CANCEL_CALL_T does not work.");
-
-
-
-/* This is a complete read packet. */
-struct MIV3_PACKET_COMMAND_READ_DATA_STRUCT
-{
-	MIV3_PACKET_HEADER_T tHeader;
-	uint16_t usDataSize;
-	uint32_t ulAddress;
-	uint8_t  ucCrcHi;
-	uint8_t  ucCrcLo;
-};
-MUHKUH_STATIC_ASSERT( sizeof(struct MIV3_PACKET_COMMAND_READ_DATA_STRUCT)==13, "Packing of MIV3_PACKET_COMMAND_READ_DATA_STRUCT does not work.");
-
-typedef union MIV3_PACKET_COMMAND_READ_DATA_UNION
-{
-	struct MIV3_PACKET_COMMAND_READ_DATA_STRUCT s;
-	uint8_t auc[13];
-} MIV3_PACKET_COMMAND_READ_DATA_T;
-MUHKUH_STATIC_ASSERT( sizeof(MIV3_PACKET_COMMAND_READ_DATA_T)==13, "Packing of MIV3_PACKET_COMMAND_READ_DATA_T does not work.");
-
-
-
-/* This is the start of a write packet. */
-struct MIV3_PACKET_COMMAND_WRITE_DATA_HEADER_STRUCT
-{
-	MIV3_PACKET_HEADER_T tHeader;
-	uint16_t usDataSize;
-	uint32_t ulAddress;
-};
-MUHKUH_STATIC_ASSERT( sizeof(struct MIV3_PACKET_COMMAND_WRITE_DATA_HEADER_STRUCT)==11, "Packing of MIV3_PACKET_COMMAND_WRITE_DATA_HEADER_STRUCT does not work.");
-
-typedef union MIV3_PACKET_COMMAND_WRITE_DATA_HEADER_UNION
-{
-	struct MIV3_PACKET_COMMAND_WRITE_DATA_HEADER_STRUCT s;
-	uint8_t auc[11];
-} MIV3_PACKET_COMMAND_WRITE_DATA_HEADER_T;
-MUHKUH_STATIC_ASSERT( sizeof(MIV3_PACKET_COMMAND_WRITE_DATA_HEADER_T)==11, "Packing of MIV3_PACKET_COMMAND_WRITE_DATA_HEADER_T does not work.");
-
-
-
-/* This is a complete call package. */
-struct MIV3_PACKET_COMMAND_CALL_STRUCT
-{
-	MIV3_PACKET_HEADER_T tHeader;
-	uint32_t ulAddress;
-	uint32_t ulR0;
-	uint8_t  ucCrcHi;
-	uint8_t  ucCrcLo;
-};
-MUHKUH_STATIC_ASSERT( sizeof(struct MIV3_PACKET_COMMAND_CALL_STRUCT)==15, "Packing of MIV3_PACKET_COMMAND_CALL_STRUCT does not work.");
-
-typedef union MIV3_PACKET_COMMAND_CALL_UNION
-{
-	struct MIV3_PACKET_COMMAND_CALL_STRUCT s;
-	uint8_t auc[15];
-} MIV3_PACKET_COMMAND_CALL_T;
-MUHKUH_STATIC_ASSERT( sizeof(MIV3_PACKET_COMMAND_CALL_T)==15, "Packing of MIV3_PACKET_COMMAND_CALL_T does not work.");
-
-#pragma pack(pop)
-
+#include "../src/interface.h"
 
 #endif  /* !defined(SWIG) */
 
 
 /*-----------------------------------*/
+
+typedef int RESULT_INT_TRUE_OR_NIL_WITH_ERR;
+typedef int RESULT_INT_NOTHING_OR_NIL_WITH_ERR;
 
 class MUHKUH_EXPORT katscha
 {
@@ -275,17 +117,40 @@ public:
 
 	unsigned int scan(lua_State *ptLuaStateForTableAccess);
 
-	void open(const char *pcDevice);
-	void close(void);
+	RESULT_INT_TRUE_OR_NIL_WITH_ERR open(const char *pcDevice);
+	RESULT_INT_TRUE_OR_NIL_WITH_ERR close(void);
 
-	void test(void);
+	RESULT_INT_TRUE_OR_NIL_WITH_ERR reset(void);
+	RESULT_INT_NOTHING_OR_NIL_WITH_ERR get_status(lua_State *MUHKUH_SWIG_OUTPUT_CUSTOM_OBJECT);
+	RESULT_INT_TRUE_OR_NIL_WITH_ERR set_mode(const char *pcMode);
+	RESULT_INT_NOTHING_OR_NIL_WITH_ERR get_mode(const char **ppcBUFFER_OUT, size_t *psizBUFFER_OUT);
+	RESULT_INT_TRUE_OR_NIL_WITH_ERR source_set_voltage(unsigned long ulPwmValue);
+	RESULT_INT_TRUE_OR_NIL_WITH_ERR source_set_max_current(unsigned long ulMaxCurrent);
+	RESULT_INT_NOTHING_OR_NIL_WITH_ERR source_get_voltage(unsigned long *pulARGUMENT_OUT);
+	RESULT_INT_NOTHING_OR_NIL_WITH_ERR source_get_current(unsigned long *pulARGUMENT_OUT);
+	RESULT_INT_TRUE_OR_NIL_WITH_ERR sink_set_current(unsigned long ulCurrent);
 /* *** LUA interface end *** */
 
 #if !defined(SWIG)
+	const char *get_error_message(void);
+
+	typedef struct MODE2NAME_STRUCT
+	{
+		KATSCHA_MODE_T tMode;
+		const char *pcName;
+	} MODE2NAME_T;
+	static const MODE2NAME_T atMode2Name[3];
+
 protected:
 
 private:
 	int identifyDevice(libusb_device *ptDevice);
+	const MODE2NAME_T *find_mode_string(const char *pcMode);
+	const MODE2NAME_T *find_mode_value(KATSCHA_MODE_T tMode);
+	int exchange(KATSCHA_PACKET_T *ptPacketSend, size_t sizPacketSend, KATSCHA_PACKET_T *ptPacketReceive, size_t *psizPacketReceive);
+
+	void set_error_message(const char *pcFmt, ...);
+	const char *get_katscha_error_message(KATSCHA_STATUS_T tStatus);
 
 	void log(const char *pcFmt, ...);
 	void callback_long(SWIGLUA_REF *ptLuaFn, long lData, long lCallbackUserData);
@@ -304,6 +169,7 @@ private:
 	const unsigned char m_ucEndpointIn = 0x85U;
 	const unsigned char m_ucEndpointOut = 0x04U;
 
+	char *m_pcErrorString;
 #endif  /* !defined(SWIG) */
 };
 

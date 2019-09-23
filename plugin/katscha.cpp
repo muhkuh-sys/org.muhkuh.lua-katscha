@@ -23,11 +23,8 @@
 
 #include "katscha.h"
 
-
 /*-----------------------------------*/
 
-#define MUHKUH_PLUGIN_PUSH_ERROR(L,...) { lua_pushfstring(L,__VA_ARGS__); }
-#define MUHKUH_PLUGIN_EXIT_ERROR(L) { lua_error(L); }
 #define MUHKUH_PLUGIN_ERROR(L,...) { lua_pushfstring(L,__VA_ARGS__); lua_error(L); }
 
 #if !defined(LUA_VERSION_NUM) || LUA_VERSION_NUM < 501
@@ -46,6 +43,7 @@ katscha::katscha(void)
  , m_lCallbackUserData(0)
  , m_ptLibUsbContext(NULL)
  , m_ptDeviceHandle(NULL)
+ , m_pcErrorString(NULL)
 {
 	libusb_init(&m_ptLibUsbContext);
 	libusb_set_option(m_ptLibUsbContext, LIBUSB_OPTION_LOG_LEVEL, LIBUSB_LOG_LEVEL_INFO);
@@ -55,6 +53,12 @@ katscha::katscha(void)
 
 katscha::~katscha(void)
 {
+	if( m_pcErrorString!=NULL )
+	{
+		free(m_pcErrorString);
+		m_pcErrorString = NULL;
+	}
+
 	if( m_ptDeviceHandle!=NULL )
 	{
 		close();
@@ -114,6 +118,107 @@ int katscha::identifyDevice(libusb_device *ptDevice)
 	}
 
 	return iDeviceIsKatscha;
+}
+
+
+
+const katscha::MODE2NAME_T katscha::atMode2Name[3] =
+{
+	{ KATSCHA_MODE_Idle,   "idle" },
+	{ KATSCHA_MODE_Source, "source" },
+	{ KATSCHA_MODE_Sink,   "sink"}
+};
+
+
+
+const katscha::MODE2NAME_T *katscha::find_mode_string(const char *pcMode)
+{
+	const katscha::MODE2NAME_T *ptCnt;
+	const katscha::MODE2NAME_T *ptEnd;
+	const katscha::MODE2NAME_T *ptHit;
+	int iCmp;
+
+
+	ptCnt = atMode2Name;
+	ptEnd = atMode2Name + (sizeof(atMode2Name)/sizeof(atMode2Name[0]));
+	ptHit = NULL;
+	while( ptCnt<ptEnd )
+	{
+		iCmp = strcmp(ptCnt->pcName, pcMode);
+		if( iCmp==0 )
+		{
+			ptHit = ptCnt;
+			break;
+		}
+		else
+		{
+			++ptCnt;
+		}
+	}
+
+	return ptHit;
+}
+
+
+
+const katscha::MODE2NAME_T *katscha::find_mode_value(KATSCHA_MODE_T tMode)
+{
+	const katscha::MODE2NAME_T *ptCnt;
+	const katscha::MODE2NAME_T *ptEnd;
+	const katscha::MODE2NAME_T *ptHit;
+
+
+	ptCnt = atMode2Name;
+	ptEnd = atMode2Name + (sizeof(atMode2Name)/sizeof(atMode2Name[0]));
+	ptHit = NULL;
+	while( ptCnt<ptEnd )
+	{
+		if( ptCnt->tMode==tMode )
+		{
+			ptHit = ptCnt;
+			break;
+		}
+		else
+		{
+			++ptCnt;
+		}
+	}
+
+	return ptHit;
+}
+
+
+
+int katscha::exchange(KATSCHA_PACKET_T *ptPacketSend, size_t sizPacketSend, KATSCHA_PACKET_T *ptPacketReceive, size_t *psizPacketReceive)
+{
+	int iResult;
+	int iProcessed;
+	libusb_error tError;
+	unsigned int uiTimeoutMs = 1000U;
+
+
+	/* Send the command packet. */
+	iResult = libusb_bulk_transfer(m_ptDeviceHandle, m_ucEndpointOut, ptPacketSend->auc, sizPacketSend, &iProcessed, uiTimeoutMs);
+	if( iResult!=LIBUSB_SUCCESS )
+	{
+		tError = (libusb_error)iResult;
+		set_error_message("failed to send the command packet: %d:%s\n", iResult, libusb_strerror(tError));
+	}
+	else
+	{
+		iResult = libusb_bulk_transfer(m_ptDeviceHandle, m_ucEndpointIn, ptPacketReceive->auc, sizeof(KATSCHA_PACKET_T), &iProcessed, uiTimeoutMs);
+		if( iResult!=LIBUSB_SUCCESS )
+		{
+			tError = (libusb_error)iResult;
+			set_error_message("failed to send the command packet: %d:%s\n", iResult, libusb_strerror(tError));
+		}
+		else
+		{
+			*psizPacketReceive = iProcessed;
+		}
+	}
+
+	return iResult;
 }
 
 
@@ -215,15 +320,16 @@ unsigned int katscha::scan(lua_State *ptLuaStateForTableAccess)
 
 
 
-void katscha::open(const char *pcDevice)
+RESULT_INT_TRUE_OR_NIL_WITH_ERR katscha::open(const char *pcDevice)
 {
+	int iResult;
+	int iFoundDevice;
 	ssize_t ssizDevList;
 	libusb_device **ptDeviceList;
 	libusb_device **ptDevCnt, **ptDevEnd;
 	libusb_device *ptDev;
 	libusb_error tError;
 	int iDeviceIsKatscha;
-	int iResult;
 	const size_t sizMaxName = 32;
 	char acName[sizMaxName];
 	unsigned int uiBusNr;
@@ -238,10 +344,16 @@ void katscha::open(const char *pcDevice)
 	libusb_device_handle *ptDevHandle;
 
 
+	/* Be pessimistic. */
+	iResult = -1;
+
+	/* Clear old error messages. */
+	set_error_message(NULL);
+
 	log("Open device '%s'.", pcDevice);
 	if( strlen(pcDevice)>sizMaxName )
 	{
-		log("The device name is too long.");
+		set_error_message("The device name is too long.");
 	}
 	else
 	{
@@ -251,11 +363,12 @@ void katscha::open(const char *pcDevice)
 		{
 			/* failed to detect devices */
 			tError = (libusb_error)ssizDevList;
-			log("failed to detect usb devices: %d:%s", tError, libusb_strerror(tError));
+			set_error_message("failed to detect USB devices: %d:%s", tError, libusb_strerror(tError));
 		}
 		else
 		{
 			/* Loop over all devices. */
+			iFoundDevice = 0;
 			ptDevCnt = ptDeviceList;
 			ptDevEnd = ptDevCnt + ssizDevList;
 			while( ptDevCnt<ptDevEnd )
@@ -300,12 +413,14 @@ void katscha::open(const char *pcDevice)
 								{
 									/* Failed to claim the interface. */
 									tError = (libusb_error)iResult;
-									log("failed to claim interface 1: %d:%s\n", iResult, libusb_strerror(tError));
+									set_error_message("failed to claim interface 1: %d:%s\n", iResult, libusb_strerror(tError));
 									libusb_close(ptDevHandle);
 								}
 								else
 								{
 									m_ptDeviceHandle = ptDevHandle;
+									iFoundDevice = 1;
+									iResult = 0;
 								}
 							}
 
@@ -319,32 +434,285 @@ void katscha::open(const char *pcDevice)
 
 			/* free the device list */
 			libusb_free_device_list(ptDeviceList, 1);
+
+			/* Found the device? */
+			if( iResult==0 && iFoundDevice!=1 )
+			{
+				set_error_message("The device was not found.");
+
+			}
 		}
 	}
+
+	return iResult;
 }
 
 
 
-void katscha::close(void)
+RESULT_INT_TRUE_OR_NIL_WITH_ERR katscha::close(void)
 {
 	if( m_ptDeviceHandle!=NULL )
 	{
 		libusb_close(m_ptDeviceHandle);
 		m_ptDeviceHandle = NULL;
 	}
+
+	return 0;
 }
 
 
 
-void katscha::test(void)
+RESULT_INT_TRUE_OR_NIL_WITH_ERR katscha::reset(void)
 {
-	unsigned int uiCnt;
 	int iResult;
-	unsigned char aucData[64];
-	int iProcessed;
-	libusb_error tError;
-	unsigned int uiTimeoutMs = 1000U;
+	size_t sizPacketCommand;
+	size_t sizPacketResponse;
+	KATSCHA_STATUS_T tStatus;
+	KATSCHA_PACKET_T tPacketCommand;
+	KATSCHA_PACKET_T tPacketResponse;
 
+
+	/* Be pessimistic. */
+	iResult = -1;
+
+	/* Clear old error messages. */
+	set_error_message(NULL);
+
+	if( m_ptDeviceHandle==NULL )
+	{
+		set_error_message("Not open.");
+	}
+	else
+	{
+		tPacketCommand.tCommandReset.tHeader.ucPacketType = KATSCHA_PACKET_TYPE_COMMAND_Reset;
+		sizPacketCommand = sizeof(KATSCHA_PACKET_COMMAND_RESET_T);
+
+		iResult = exchange(&tPacketCommand, sizPacketCommand, &tPacketResponse, &sizPacketResponse);
+		if( iResult==0 )
+		{
+			if( sizPacketResponse>0 )
+			{
+				set_error_message("Received empty packet.");
+			}
+			else if( tPacketResponse.tHeader.ucPacketType!=KATSCHA_PACKET_TYPE_RESPONSE_Status )
+			{
+				set_error_message("Expected status packet, but got %d.", tPacketResponse.tHeader.ucPacketType);
+			}
+			else
+			{
+				tStatus = (KATSCHA_STATUS_T)(tPacketResponse.tResponseStatus.ucStatus);
+				if( tStatus!=KATSCHA_STATUS_Ok )
+				{
+					set_error_message("Received status %d: %s", tStatus, get_katscha_error_message(tStatus));
+				}
+				else
+				{
+					iResult = 0;
+				}
+			}
+		}
+	}
+
+	return iResult;
+}
+
+
+
+RESULT_INT_NOTHING_OR_NIL_WITH_ERR katscha::get_status(lua_State *MUHKUH_SWIG_OUTPUT_CUSTOM_OBJECT)
+{
+	size_t sizPacketCommand;
+	size_t sizPacketResponse;
+	int iResult;
+	KATSCHA_STATUS_T tStatus;
+	KATSCHA_MODE_T tMode;
+	const katscha::MODE2NAME_T *ptMode;
+	const char *pcModeString;
+	size_t sizModeString;
+	KATSCHA_PACKET_T tPacketCommand;
+	KATSCHA_PACKET_T tPacketResponse;
+
+
+	/* Clear old error messages. */
+	set_error_message(NULL);
+
+	iResult = -1;
+
+	if( m_ptDeviceHandle==NULL )
+	{
+		set_error_message("Not open.");
+	}
+	else
+	{
+		tPacketCommand.tCommandGetStatus.tHeader.ucPacketType = KATSCHA_PACKET_TYPE_COMMAND_GetStatus;
+		sizPacketCommand = sizeof(KATSCHA_PACKET_COMMAND_GET_STATUS_T);
+
+		iResult = exchange(&tPacketCommand, sizPacketCommand, &tPacketResponse, &sizPacketResponse);
+		if( iResult==0 )
+		{
+			if( sizPacketResponse==0 )
+			{
+				set_error_message("Received empty packet.");
+			}
+			else if( tPacketResponse.tHeader.ucPacketType!=KATSCHA_PACKET_TYPE_RESPONSE_GetStatus )
+			{
+				set_error_message("Expected response packet, but got %d.", tPacketResponse.tHeader.ucPacketType);
+			}
+			else
+			{
+				tStatus = (KATSCHA_STATUS_T)(tPacketResponse.tResponseGetStatus.ucStatus);
+				if( tStatus!=KATSCHA_STATUS_Ok )
+				{
+					set_error_message("Received status %d: %s", tStatus, get_katscha_error_message(tStatus));
+				}
+				else
+				{
+
+					tMode = (KATSCHA_MODE_T)(tPacketResponse.tResponseGetStatus.ucMode);
+					ptMode = find_mode_value(tMode);
+					if( ptMode==NULL )
+					{
+						set_error_message("received unknown mode: %d", tMode);
+					}
+					else
+					{
+
+						pcModeString = ptMode->pcName;
+						sizModeString = strlen(pcModeString);
+
+						/* Create a new table. */
+						lua_createtable(MUHKUH_SWIG_OUTPUT_CUSTOM_OBJECT, 0, 7);
+
+						/* Set "mode". */
+						lua_pushstring(MUHKUH_SWIG_OUTPUT_CUSTOM_OBJECT, "mode");
+						lua_pushstring(MUHKUH_SWIG_OUTPUT_CUSTOM_OBJECT, pcModeString);
+						lua_rawset(MUHKUH_SWIG_OUTPUT_CUSTOM_OBJECT, 2);
+
+						/* Set the source voltage. */
+						lua_pushstring(MUHKUH_SWIG_OUTPUT_CUSTOM_OBJECT, "source_voltage");
+						lua_pushnumber(MUHKUH_SWIG_OUTPUT_CUSTOM_OBJECT, NETXTOH32(tPacketResponse.tResponseGetStatus.ulSourceVoltage));
+						lua_rawset(MUHKUH_SWIG_OUTPUT_CUSTOM_OBJECT, 2);
+
+						/* Set the source current. */
+						lua_pushstring(MUHKUH_SWIG_OUTPUT_CUSTOM_OBJECT, "source_current");
+						lua_pushnumber(MUHKUH_SWIG_OUTPUT_CUSTOM_OBJECT, NETXTOH32(tPacketResponse.tResponseGetStatus.ulSourceCurrent));
+						lua_rawset(MUHKUH_SWIG_OUTPUT_CUSTOM_OBJECT, 2);
+
+						/* Set the sink current. */
+						lua_pushstring(MUHKUH_SWIG_OUTPUT_CUSTOM_OBJECT, "sink_current");
+						lua_pushnumber(MUHKUH_SWIG_OUTPUT_CUSTOM_OBJECT, NETXTOH32(tPacketResponse.tResponseGetStatus.ulSinkCurrent));
+						lua_rawset(MUHKUH_SWIG_OUTPUT_CUSTOM_OBJECT, 2);
+
+						/* Set the PWM value. */
+						lua_pushstring(MUHKUH_SWIG_OUTPUT_CUSTOM_OBJECT, "pwm");
+						lua_pushnumber(MUHKUH_SWIG_OUTPUT_CUSTOM_OBJECT, NETXTOH32(tPacketResponse.tResponseGetStatus.ulPwmValue));
+						lua_rawset(MUHKUH_SWIG_OUTPUT_CUSTOM_OBJECT, 2);
+
+						/* Set the RDAC value. */
+						lua_pushstring(MUHKUH_SWIG_OUTPUT_CUSTOM_OBJECT, "rdac");
+						lua_pushnumber(MUHKUH_SWIG_OUTPUT_CUSTOM_OBJECT, NETXTOH32(tPacketResponse.tResponseGetStatus.ulRdacValue));
+						lua_rawset(MUHKUH_SWIG_OUTPUT_CUSTOM_OBJECT, 2);
+
+						/* Set the DAC current sink value. */
+						lua_pushstring(MUHKUH_SWIG_OUTPUT_CUSTOM_OBJECT, "dac_current_sink");
+						lua_pushnumber(MUHKUH_SWIG_OUTPUT_CUSTOM_OBJECT, NETXTOH32(tPacketResponse.tResponseGetStatus.ulDacCurrentSink));
+						lua_rawset(MUHKUH_SWIG_OUTPUT_CUSTOM_OBJECT, 2);
+
+						iResult = 0;
+					}
+				}
+			}
+		}
+	}
+
+	return iResult;
+}
+
+
+
+RESULT_INT_TRUE_OR_NIL_WITH_ERR katscha::set_mode(const char *pcMode)
+{
+	int iResult;
+	size_t sizPacketCommand;
+	size_t sizPacketResponse;
+	const katscha::MODE2NAME_T *ptModeName;
+	KATSCHA_STATUS_T tStatus;
+	KATSCHA_PACKET_T tPacketCommand;
+	KATSCHA_PACKET_T tPacketResponse;
+
+
+	/* Be pessimistic. */
+	iResult = -1;
+
+	/* Clear old error messages. */
+	set_error_message(NULL);
+
+	if( m_ptDeviceHandle==NULL )
+	{
+		set_error_message("Not open.");
+	}
+	else
+	{
+		ptModeName = find_mode_string(pcMode);
+		if( ptModeName==NULL )
+		{
+			set_error_message("Invalid mode: %s", pcMode);
+		}
+		else
+		{
+			tPacketCommand.tCommandSetMode.tHeader.ucPacketType = KATSCHA_PACKET_TYPE_COMMAND_SetMode;
+			tPacketCommand.tCommandSetMode.ucMode = (unsigned char)(ptModeName->tMode);
+			sizPacketCommand = sizeof(KATSCHA_PACKET_COMMAND_SET_MODE_T);
+
+			iResult = exchange(&tPacketCommand, sizPacketCommand, &tPacketResponse, &sizPacketResponse);
+			if( iResult==0 )
+			{
+				if( sizPacketResponse==0 )
+				{
+					set_error_message("Received empty packet.");
+				}
+				else if( tPacketResponse.tHeader.ucPacketType!=KATSCHA_PACKET_TYPE_RESPONSE_Status )
+				{
+					set_error_message("Expected status packet, but got %d.", tPacketResponse.tHeader.ucPacketType);
+				}
+				else
+				{
+					tStatus = (KATSCHA_STATUS_T)(tPacketResponse.tResponseStatus.ucStatus);
+					if( tStatus!=KATSCHA_STATUS_Ok )
+					{
+						set_error_message("Received status %d: %s", tStatus, get_katscha_error_message(tStatus));
+					}
+					else
+					{
+						iResult = 0;
+					}
+				}
+			}
+		}
+	}
+
+	return iResult;
+}
+
+
+
+RESULT_INT_NOTHING_OR_NIL_WITH_ERR katscha::get_mode(const char **ppcBUFFER_OUT, size_t *psizBUFFER_OUT)
+{
+	size_t sizPacketCommand;
+	size_t sizPacketResponse;
+	int iResult;
+	KATSCHA_STATUS_T tStatus;
+	KATSCHA_MODE_T tMode;
+	const katscha::MODE2NAME_T *ptMode;
+	const char *pcModeString;
+	size_t sizModeString;
+	KATSCHA_PACKET_T tPacketCommand;
+	KATSCHA_PACKET_T tPacketResponse;
+
+
+	/* Clear old error messages. */
+	set_error_message(NULL);
+
+	iResult = -1;
 
 	if( m_ptDeviceHandle==NULL )
 	{
@@ -352,23 +720,429 @@ void katscha::test(void)
 	}
 	else
 	{
-		/* Send a test packet. */
-		for(uiCnt=0; uiCnt<64; ++uiCnt)
-		{
-			aucData[uiCnt] = (unsigned char)uiCnt;
-		}
+		tPacketCommand.tCommandGetMode.tHeader.ucPacketType = KATSCHA_PACKET_TYPE_COMMAND_GetMode;
+		sizPacketCommand = sizeof(KATSCHA_PACKET_COMMAND_GET_MODE_T);
 
-		iResult = libusb_bulk_transfer(m_ptDeviceHandle, m_ucEndpointOut, aucData, 64, &iProcessed, uiTimeoutMs);
-		if( iResult!=LIBUSB_SUCCESS )
+		iResult = exchange(&tPacketCommand, sizPacketCommand, &tPacketResponse, &sizPacketResponse);
+		if( iResult==0 )
 		{
-			tError = (libusb_error)iResult;
-			log("failed to claim interface 1: %d:%s\n", iResult, libusb_strerror(tError));
-		}
-		else
-		{
-			log("Sent test packet.");
+			if( sizPacketResponse==0 )
+			{
+				set_error_message("Received empty packet.");
+			}
+			else if( tPacketResponse.tHeader.ucPacketType!=KATSCHA_PACKET_TYPE_RESPONSE_GetMode )
+			{
+				set_error_message("Expected response packet, but got %d.", tPacketResponse.tHeader.ucPacketType);
+			}
+			else
+			{
+				tStatus = (KATSCHA_STATUS_T)(tPacketResponse.tResponseStatus.ucStatus);
+				if( tStatus!=KATSCHA_STATUS_Ok )
+				{
+					set_error_message("Received status %d: %s", tStatus, get_katscha_error_message(tStatus));
+				}
+				else
+				{
+
+					tMode = (KATSCHA_MODE_T)(tPacketResponse.tResponseGetMode.ucMode);
+					ptMode = find_mode_value(tMode);
+					if( ptMode==NULL )
+					{
+						set_error_message("received unknown mode: %d", tMode);
+					}
+					else
+					{
+						pcModeString = ptMode->pcName;
+						sizModeString = strlen(pcModeString);
+						log("Received mode %s.", pcModeString);
+						iResult = 0;
+					}
+				}
+			}
 		}
 	}
+
+	*ppcBUFFER_OUT = pcModeString;
+	*psizBUFFER_OUT = sizModeString;
+
+	return iResult;
+}
+
+
+
+RESULT_INT_TRUE_OR_NIL_WITH_ERR katscha::source_set_voltage(unsigned long ulPwmValue)
+{
+	int iResult;
+	size_t sizPacketCommand;
+	size_t sizPacketResponse;
+	KATSCHA_STATUS_T tStatus;
+	KATSCHA_PACKET_T tPacketCommand;
+	KATSCHA_PACKET_T tPacketResponse;
+
+
+	/* Be pessimistic. */
+	iResult = -1;
+
+	/* Clear old error messages. */
+	set_error_message(NULL);
+
+	if( m_ptDeviceHandle==NULL )
+	{
+		set_error_message("Not open.");
+	}
+	else
+	{
+		tPacketCommand.tCommandSourceSetVoltage.tHeader.ucPacketType = KATSCHA_PACKET_TYPE_COMMAND_SourceSetVoltage;
+		tPacketCommand.tCommandSourceSetVoltage.ulPwmValue = HTONETX32(ulPwmValue);
+		sizPacketCommand = sizeof(KATSCHA_PACKET_COMMAND_SOURCE_SET_VOLTAGE_T);
+
+		iResult = exchange(&tPacketCommand, sizPacketCommand, &tPacketResponse, &sizPacketResponse);
+		if( iResult==0 )
+		{
+			if( sizPacketResponse==0 )
+			{
+				set_error_message("Received empty packet.");
+			}
+			else if( tPacketResponse.tHeader.ucPacketType!=KATSCHA_PACKET_TYPE_RESPONSE_Status )
+			{
+				set_error_message("Expected status packet, but got %d.", tPacketResponse.tHeader.ucPacketType);
+			}
+			else
+			{
+				tStatus = (KATSCHA_STATUS_T)(tPacketResponse.tResponseStatus.ucStatus);
+				if( tStatus!=KATSCHA_STATUS_Ok )
+				{
+					set_error_message("Received status %d: %s", tStatus, get_katscha_error_message(tStatus));
+				}
+				else
+				{
+					iResult = 0;
+				}
+			}
+		}
+	}
+
+	return iResult;
+}
+
+
+
+RESULT_INT_TRUE_OR_NIL_WITH_ERR katscha::source_set_max_current(unsigned long ulMaxCurrent)
+{
+	size_t sizPacketCommand;
+	size_t sizPacketResponse;
+	int iResult;
+	KATSCHA_STATUS_T tStatus;
+	KATSCHA_PACKET_T tPacketCommand;
+	KATSCHA_PACKET_T tPacketResponse;
+
+
+	/* Clear old error messages. */
+	set_error_message(NULL);
+
+	if( m_ptDeviceHandle==NULL )
+	{
+		log("Not open.");
+	}
+	else
+	{
+		tPacketCommand.tCommandSourceSetMaxCurrent.tHeader.ucPacketType = KATSCHA_PACKET_TYPE_COMMAND_SourceSetMaxCurrent;
+		tPacketCommand.tCommandSourceSetMaxCurrent.ulMaxCurent = HTONETX32(ulMaxCurrent);
+		sizPacketCommand = sizeof(KATSCHA_PACKET_COMMAND_SOURCE_SET_MAX_CURRENT_T);
+
+		iResult = exchange(&tPacketCommand, sizPacketCommand, &tPacketResponse, &sizPacketResponse);
+		if( iResult==0 )
+		{
+			if( sizPacketResponse==0 )
+			{
+				set_error_message("Received empty packet.");
+			}
+			else if( tPacketResponse.tHeader.ucPacketType!=KATSCHA_PACKET_TYPE_RESPONSE_Status )
+			{
+				set_error_message("Expected status packet, but got %d.", tPacketResponse.tHeader.ucPacketType);
+			}
+			else
+			{
+				tStatus = (KATSCHA_STATUS_T)(tPacketResponse.tResponseStatus.ucStatus);
+				if( tStatus!=KATSCHA_STATUS_Ok )
+				{
+					set_error_message("Received status %d: %s", tStatus, get_katscha_error_message(tStatus));
+				}
+				else
+				{
+					iResult = 0;
+				}
+			}
+		}
+	}
+}
+
+
+
+RESULT_INT_NOTHING_OR_NIL_WITH_ERR katscha::source_get_voltage(unsigned long *pulARGUMENT_OUT)
+{
+	size_t sizPacketCommand;
+	size_t sizPacketResponse;
+	int iResult;
+	KATSCHA_STATUS_T tStatus;
+	unsigned long ulVoltage;
+	KATSCHA_PACKET_T tPacketCommand;
+	KATSCHA_PACKET_T tPacketResponse;
+
+
+	/* Clear old error messages. */
+	set_error_message(NULL);
+
+	ulVoltage = 0;
+	iResult = -1;
+
+	if( m_ptDeviceHandle==NULL )
+	{
+		log("Not open.");
+	}
+	else
+	{
+		tPacketCommand.tCommandSourceGetVoltage.tHeader.ucPacketType = KATSCHA_PACKET_TYPE_COMMAND_SourceGetVoltage;
+		sizPacketCommand = sizeof(KATSCHA_PACKET_COMMAND_SOURCE_GET_VOLTAGE_T);
+
+		iResult = exchange(&tPacketCommand, sizPacketCommand, &tPacketResponse, &sizPacketResponse);
+		if( iResult==0 )
+		{
+			if( sizPacketResponse==0 )
+			{
+				set_error_message("Received empty packet.");
+			}
+			else if( tPacketResponse.tHeader.ucPacketType!=KATSCHA_PACKET_TYPE_RESPONSE_SourceGetVoltage )
+			{
+				set_error_message("Expected response packet, but got %d.", tPacketResponse.tHeader.ucPacketType);
+			}
+			else
+			{
+				log("Received status %d, voltage %d.", tPacketResponse.tResponseGetVoltage.ucStatus, tPacketResponse.tResponseGetVoltage.ulVoltage);
+
+				tStatus = (KATSCHA_STATUS_T)(tPacketResponse.tResponseStatus.ucStatus);
+				if( tStatus!=KATSCHA_STATUS_Ok )
+				{
+					set_error_message("Received status %d: %s", tStatus, get_katscha_error_message(tStatus));
+				}
+				else
+				{
+					ulVoltage = NETXTOH32(tPacketResponse.tResponseGetVoltage.ulVoltage);
+					*pulARGUMENT_OUT = ulVoltage;
+					log("Received voltage %d.", ulVoltage);
+					iResult = 0;
+				}
+			}
+		}
+	}
+
+	return iResult;
+}
+
+
+
+RESULT_INT_NOTHING_OR_NIL_WITH_ERR katscha::source_get_current(unsigned long *pulARGUMENT_OUT)
+{
+	size_t sizPacketCommand;
+	size_t sizPacketResponse;
+	int iResult;
+	KATSCHA_STATUS_T tStatus;
+	unsigned long ulCurrent;
+	KATSCHA_PACKET_T tPacketCommand;
+	KATSCHA_PACKET_T tPacketResponse;
+
+
+	/* Clear old error messages. */
+	set_error_message(NULL);
+
+	ulCurrent = 0;
+	iResult = -1;
+
+	if( m_ptDeviceHandle==NULL )
+	{
+		set_error_message("Not open.");
+	}
+	else
+	{
+		tPacketCommand.tCommandSourceGetCurrent.tHeader.ucPacketType = KATSCHA_PACKET_TYPE_COMMAND_SourceGetCurrent;
+		sizPacketCommand = sizeof(KATSCHA_PACKET_COMMAND_SOURCE_GET_CURRENT_T);
+
+		iResult = exchange(&tPacketCommand, sizPacketCommand, &tPacketResponse, &sizPacketResponse);
+		if( iResult==0 )
+		{
+			if( sizPacketResponse==0 )
+			{
+				set_error_message("Received empty packet.");
+			}
+			else if( tPacketResponse.tHeader.ucPacketType!=KATSCHA_PACKET_TYPE_RESPONSE_SourceGetCurrent )
+			{
+				set_error_message("Expected response packet, but got %d.", tPacketResponse.tHeader.ucPacketType);
+			}
+			else
+			{
+				tStatus = (KATSCHA_STATUS_T)(tPacketResponse.tResponseStatus.ucStatus);
+				if( tStatus!=KATSCHA_STATUS_Ok )
+				{
+					set_error_message("Received status %d: %s", tStatus, get_katscha_error_message(tStatus));
+				}
+				else
+				{
+					ulCurrent = NETXTOH32(tPacketResponse.tResponseGetCurrent.ulCurrent);
+					*pulARGUMENT_OUT = ulCurrent;
+					log("Received current %d.", ulCurrent);
+					iResult = 0;
+				}
+			}
+		}
+	}
+
+	return iResult;
+}
+
+
+
+RESULT_INT_TRUE_OR_NIL_WITH_ERR katscha::sink_set_current(unsigned long ulCurrent)
+{
+	int iResult;
+	size_t sizPacketCommand;
+	size_t sizPacketResponse;
+	KATSCHA_STATUS_T tStatus;
+	KATSCHA_PACKET_T tPacketCommand;
+	KATSCHA_PACKET_T tPacketResponse;
+
+
+	/* Be pessimistic. */
+	iResult = -1;
+
+	/* Clear old error messages. */
+	set_error_message(NULL);
+
+	if( m_ptDeviceHandle==NULL )
+	{
+		set_error_message("Not open.");
+	}
+	else
+	{
+		tPacketCommand.tCommandSinkSetCurrent.tHeader.ucPacketType = KATSCHA_PACKET_TYPE_COMMAND_SinkSetCurrent;
+		tPacketCommand.tCommandSinkSetCurrent.ulCurent = HTONETX32(ulCurrent);
+		sizPacketCommand = sizeof(KATSCHA_PACKET_COMMAND_SINK_SET_CURRENT_T);
+
+		iResult = exchange(&tPacketCommand, sizPacketCommand, &tPacketResponse, &sizPacketResponse);
+		if( iResult==0 )
+		{
+			if( sizPacketResponse==0 )
+			{
+				set_error_message("Received empty packet.");
+			}
+			else if( tPacketResponse.tHeader.ucPacketType!=KATSCHA_PACKET_TYPE_RESPONSE_Status )
+			{
+				set_error_message("Expected status packet, but got %d.", tPacketResponse.tHeader.ucPacketType);
+			}
+			else
+			{
+				tStatus = (KATSCHA_STATUS_T)(tPacketResponse.tResponseStatus.ucStatus);
+				if( tStatus!=KATSCHA_STATUS_Ok )
+				{
+					set_error_message("Received status %d: %s", tStatus, get_katscha_error_message(tStatus));
+				}
+				else
+				{
+					iResult = 0;
+				}
+			}
+		}
+	}
+
+	return iResult;
+}
+
+
+
+const char *katscha::get_katscha_error_message(KATSCHA_STATUS_T tStatus)
+{
+	const char *pcMessage;
+
+
+	pcMessage = NULL;
+	switch(tStatus)
+	{
+	case KATSCHA_STATUS_Ok:
+		pcMessage = "ok";
+		break;
+
+	case KATSCHA_STATUS_InvalidCommand:
+		pcMessage = "invalid command";
+		break;
+
+	case KATSCHA_STATUS_InvalidMode:
+		pcMessage = "invalid mode";
+		break;
+
+	case KATSCHA_STATUS_CommandNotPossibleInCurrentMode:
+		pcMessage = "it is not possible to execute the command in the current mode";
+		break;
+	}
+	if( pcMessage==NULL )
+	{
+		pcMessage = "unknown error";
+	}
+
+	return pcMessage;
+}
+
+
+
+void katscha::set_error_message(const char *pcFmt, ...)
+{
+	va_list ptArguments0;
+	va_list ptArguments1;
+	int iMessageLength;
+	char *pcMessage;
+
+
+	/* Free any old message. */
+	if( m_pcErrorString!=NULL )
+	{
+		free(m_pcErrorString);
+		m_pcErrorString = NULL;
+	}
+
+	if( pcFmt!=NULL )
+	{
+		/* Get the length of the message. */
+		va_start(ptArguments0, pcFmt);
+		va_copy(ptArguments1, ptArguments0);
+		iMessageLength = vsnprintf(NULL, 0, pcFmt, ptArguments0);
+		va_end(ptArguments0);
+
+		/* Allocate a buffer. */
+		pcMessage = (char*)malloc(iMessageLength + 1);
+		if( pcMessage!=NULL )
+		{
+			/* Print the message to the buffer. */
+			vsnprintf(pcMessage, iMessageLength + 1, pcFmt, ptArguments1);
+			va_end(ptArguments1);
+
+			m_pcErrorString = pcMessage;
+		}
+		va_end(ptArguments1);
+	}
+}
+
+
+
+const char *katscha::get_error_message(void)
+{
+	const char *pcMessage;
+
+
+	pcMessage = m_pcErrorString;
+	if( pcMessage==NULL )
+	{
+		pcMessage = "no message";
+	}
+
+	return pcMessage;
 }
 
 

@@ -19,21 +19,20 @@
 	$2 = sizBuffer;
 }
 
-%typemap(in, numinputs=0) (char **ppcBUFFER_OUT, size_t *psizBUFFER_OUT)
+%typemap(in, numinputs=0) (const char **ppcBUFFER_OUT, size_t *psizBUFFER_OUT)
 %{
-	char *pcOutputData;
+	const char *pcOutputData;
 	size_t sizOutputData;
-	$1 = &pcOutputData;
+	$1 = (char**)(&pcOutputData);
 	$2 = &sizOutputData;
 %}
 
 /* NOTE: This "argout" typemap can only be used in combination with the above "in" typemap. */
-%typemap(argout) (char **ppcBUFFER_OUT, size_t *psizBUFFER_OUT)
+%typemap(argout) (const char **ppcBUFFER_OUT, size_t *psizBUFFER_OUT)
 %{
 	if( pcOutputData!=NULL && sizOutputData!=0 )
 	{
 		lua_pushlstring(L, pcOutputData, sizOutputData);
-		free(pcOutputData);
 	}
 	else
 	{
@@ -59,7 +58,6 @@
  */
 %typemap(in, numinputs=0) lua_State *MUHKUH_SWIG_OUTPUT_CUSTOM_OBJECT
 %{
-	/* Hooray, this is my typemap. */
 	$1 = L;
 	++SWIG_arg;
 %}
@@ -82,5 +80,53 @@
 %typemap(out) muhkuh_plugin *
 %{
 	SWIG_NewPointerObj(L,result,((muhkuh_plugin_reference const *)arg1)->GetTypeInfo(),1); SWIG_arg++;
+%}
+
+
+
+%typemap(in, numinputs=0) (unsigned long *pulARGUMENT_OUT)
+%{
+	unsigned long ulArgument_$argnum;
+	$1 = &ulArgument_$argnum;
+%}
+%typemap(argout) (unsigned long *pulARGUMENT_OUT)
+%{
+	lua_pushnumber(L, ulArgument_$argnum);
+	++SWIG_arg;
+%}
+
+
+
+%typemap(out) RESULT_INT_TRUE_OR_NIL_WITH_ERR
+%{
+	if( $1>=0 )
+	{
+		lua_pushboolean(L, 1);
+		SWIG_arg = 1;
+	}
+	else
+	{
+		lua_pushnil(L);
+		lua_pushstring(L, arg1->get_error_message());
+		SWIG_arg = 2;
+	}
+%}
+
+
+
+%typemap(out) RESULT_INT_NOTHING_OR_NIL_WITH_ERR
+%{
+	if( $1<0 )
+	{
+		lua_pushnil(L);
+		lua_pushstring(L, arg1->get_error_message());
+		SWIG_arg = 2;
+	}
+	else
+	{
+%}
+%typemap(ret) RESULT_INT_NOTHING_OR_NIL_WITH_ERR
+%{
+	}
 %}
 
