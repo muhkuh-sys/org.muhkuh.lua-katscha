@@ -155,20 +155,18 @@ static unsigned long powerboard_read_adc_arit_average(unsigned int uiChipSelect)
 
 static void write_dac_value(unsigned int uiSpiValue)
 {
-	unsigned int uiValue;
 	HOSTDEF(ptGpioArea);
 
-	uiValue  = ptGpioArea->aulGpio_cfg[1];
-	uiValue |= 0x04;			// GPIO 1 Low SPI_SRT_CS_3 low
-	ptGpioArea->aulGpio_cfg[1] = uiValue;
+
+	/* Set the GPIO pin to low. */
+	ptGpioArea->aulGpio_cfg[1] = 4;
 
 	spi_delay(DELAY_CYCLES);
 
 	spi_set_value(uiSpiValue);
 
-	uiValue  = ptGpioArea->aulGpio_cfg[1];
-	uiValue |= 0x05;			// GPIO 1 High SPI_SRT_CS_3 high
-	ptGpioArea->aulGpio_cfg[1] = uiValue;
+	/* Set the GPIO pin to high. */
+	ptGpioArea->aulGpio_cfg[1] = 5;
 
 	spi_delay(DELAY_CYCLES);
 }
