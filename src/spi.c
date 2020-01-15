@@ -26,9 +26,8 @@ void spi_init_IO_pins(void)
 	HOSTDEF(ptGpioArea);
 	HOSTDEF(ptHifIoCtrlArea);
 
-	uiValue  = ptGpioArea->aulGpio_cfg[1];
-	uiValue |= 0x05; // GPIO 1	High	// SPI_SRT_CS_3 high
-	ptGpioArea->aulGpio_cfg[1] = uiValue;
+
+	ptGpioArea->aulGpio_cfg[1] = 5;
 
 	uiValue  = ptHifIoCtrlArea->aulHif_pio_out[0];
 	uiValue |= SPI_MSK_CS_0|SPI_MSK_CS_1|SPI_MSK_CS_2|SPI_MSK_CLK;
