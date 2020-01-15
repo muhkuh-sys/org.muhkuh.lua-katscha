@@ -161,9 +161,11 @@ static void write_dac_value(unsigned int uiSpiValue)
 	/* Set the GPIO pin to low. */
 	ptGpioArea->aulGpio_cfg[1] = 4;
 
-	spi_delay(DELAY_CYCLES);
+	spi_delay(4*DELAY_CYCLES);
 
 	spi_set_value(uiSpiValue);
+
+	spi_delay(4*DELAY_CYCLES);
 
 	/* Set the GPIO pin to high. */
 	ptGpioArea->aulGpio_cfg[1] = 5;
