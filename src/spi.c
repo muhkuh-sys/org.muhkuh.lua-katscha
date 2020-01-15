@@ -6,14 +6,18 @@
 
 void spi_delay(unsigned int uiDelay)
 {
-	unsigned int uiCount;
+	unsigned int uiCnt;
 
-	for (uiCount = 0; uiCount < uiDelay; uiCount++)
+
+	uiCnt = 0;
+	while( uiCnt<uiDelay )
 	{
-	// only delay
+		__asm__("nop");
+		++uiCnt;
 	}
-
 }
+
+
 
 void spi_init_IO_pins(void)
 {
