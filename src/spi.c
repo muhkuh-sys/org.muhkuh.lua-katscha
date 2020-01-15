@@ -47,6 +47,8 @@ void spi_init_IO_pins(void)
 	ptHifIoCtrlArea->ulHif_pio_cfg = uiValue;
 }
 
+
+
 unsigned int spi_get_value(void)
 {
 	unsigned int uiValue;
@@ -99,7 +101,7 @@ void spi_set_value(unsigned int uiSpiValue)
 		spi_delay(DELAY_CYCLES);
 
 		uiValue = ptHifIoCtrlArea->aulHif_pio_out[0];
-		if ((uiSpiValue & (1<<16)) == (1<<16))
+		if( (uiSpiValue&(1<<15))!=0 )
 		{
 			uiValue |= SPI_MSK_MOSI;
 		}
